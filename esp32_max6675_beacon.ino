@@ -9,6 +9,7 @@
 #include "BLEUtils.h"
 #include "BLEBeacon.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 
 #define LED 2                     // Onboard led on development boards
 #define MISO 21
@@ -18,7 +19,14 @@
 
 BLEAdvertising *advertising;
 short temperature;                // Temperature as quarter Celsius
+RTC_DATA_ATTR int bootcount = 0;
+hw_timer_t *timer = NULL;
 
+/* ---------------------------------------------------------------------------------- */
+void IRAM_ATTR resetModule() {
+    ets_printf("Watchdog reboot\n");
+    esp_restart();
+}
 /* ---------------------------------------------------------------------------------- 
  * Read data from MAX6675 SPI 
  */
@@ -61,6 +69,14 @@ void set_beacon() {
 
 /* ---------------------------------------------------------------------------------- */
 void setup() {
+    bootcount++;
+
+    // Enable watchdog
+    timer = timerBegin(0, 80, true);  
+    timerAttachInterrupt(timer, &resetModule, true);
+    timerAlarmWrite(timer, 60000000, false); //set time in us
+    timerAlarmEnable(timer);
+      
     pinMode(LED, OUTPUT);
     digitalWrite(LED, LOW);   // LED off
     
@@ -80,10 +96,11 @@ void setup() {
         temperature = 32767;   // No thermocouple attached
     }
     temperature >>= 3;         // Now we have temperature stored as quarter Celsius
-  
-    Serial.begin(115200);
-    Serial.printf("%.2f°C\n",temperature*0.25);
     
+    Serial.begin(115200);
+    Serial.printf("boot %d, %.2f°C\n",bootcount, temperature*0.25);
+    Serial.flush();
+
     BLEDevice::init("ESP32+MAX6675");
     advertising = BLEDevice::getAdvertising();
     set_beacon();
@@ -92,8 +109,10 @@ void setup() {
     delay(100);
     advertising->stop();
     digitalWrite(LED, LOW);   // LED off
-   
-    esp_deep_sleep(1000000LL * DEEP_SLEEP_DURATION);
+
+    timerWrite(timer, 0);
+    esp_sleep_enable_timer_wakeup(1000000LL * DEEP_SLEEP_DURATION);
+    esp_deep_sleep_start();
 }
 /* ---------------------------------------------------------------------------------- */
 void loop() {}  // No loop but deep sleep
