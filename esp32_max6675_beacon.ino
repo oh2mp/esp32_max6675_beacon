@@ -8,25 +8,15 @@
 #include "BLEDevice.h"
 #include "BLEUtils.h"
 #include "BLEBeacon.h"
-#include "esp_sleep.h"
-#include "esp_system.h"
 
 #define LED 2                     // Onboard led on development boards
 #define MISO 21
 #define CS   19
 #define SCLK 18
-#define DEEP_SLEEP_DURATION 5     // Deep sleep seconds between beaconing
 
 BLEAdvertising *advertising;
 short temperature;                // Temperature as quarter Celsius
-RTC_DATA_ATTR int bootcount = 0;
-hw_timer_t *timer = NULL;
 
-/* ---------------------------------------------------------------------------------- */
-void IRAM_ATTR resetModule() {
-    ets_printf("Watchdog reboot\n");
-    esp_restart();
-}
 /* ---------------------------------------------------------------------------------- 
  * Read data from MAX6675 SPI 
  */
@@ -35,12 +25,12 @@ byte spi_read(void) {
 
     for (int i=7; i >= 0; i--) {
         digitalWrite(SCLK, LOW);
-        delay(1);
+        delay(50);
         if (digitalRead(MISO)) {
             d |= (1 << i);
         }
         digitalWrite(SCLK, HIGH);
-        delay(1);
+        delay(50);
     }
     return d;
 }
@@ -69,20 +59,22 @@ void set_beacon() {
 
 /* ---------------------------------------------------------------------------------- */
 void setup() {
-    bootcount++;
-
-    // Enable watchdog
-    timer = timerBegin(0, 80, true);  
-    timerAttachInterrupt(timer, &resetModule, true);
-    timerAlarmWrite(timer, 60000000, false); //set time in us
-    timerAlarmEnable(timer);
-      
     pinMode(LED, OUTPUT);
     digitalWrite(LED, LOW);   // LED off
     
     pinMode(CS,   OUTPUT);
     pinMode(SCLK, OUTPUT); 
     pinMode(MISO, INPUT);
+
+    // Enable serial for debugging if wanted
+    // Serial.begin(115200);
+
+    BLEDevice::init("ESP32+MAX6675");
+    advertising = BLEDevice::getAdvertising();
+}
+/* ---------------------------------------------------------------------------------- */
+
+void loop() {
     digitalWrite(CS, HIGH);
     delay(500);                // Let thermocouple to settle
 
@@ -96,24 +88,24 @@ void setup() {
         temperature = 32767;   // No thermocouple attached
     }
     temperature >>= 3;         // Now we have temperature stored as quarter Celsius
-    
-    Serial.begin(115200);
-    Serial.printf("boot %d, %.2f°C\n",bootcount, temperature*0.25);
-    Serial.flush();
 
-    BLEDevice::init("ESP32+MAX6675");
-    advertising = BLEDevice::getAdvertising();
+    // Enable serial for debugging if wanted
+    // Serial.printf("%.2f°C\n", temperature*0.25);
+
+    if (temperature != 0) {
     set_beacon();
-    digitalWrite(LED, HIGH);   // LED on during the advertising
-    advertising->start();
-    delay(100);
-    advertising->stop();
-    digitalWrite(LED, LOW);   // LED off
-
-    timerWrite(timer, 0);
-    esp_sleep_enable_timer_wakeup(1000000LL * DEEP_SLEEP_DURATION);
-    esp_deep_sleep_start();
+        digitalWrite(LED, HIGH);   // LED on during the advertising
+        advertising->start();
+        delay(100);
+        advertising->stop();
+        digitalWrite(LED, LOW);   // LED off
+    }
+    
+    delay(4500);
+    
+    // Reboot once in hour to be sure    
+    if (millis() > 3.6E+6) {
+        ESP.restart();
+    }
 }
-/* ---------------------------------------------------------------------------------- */
-void loop() {}  // No loop but deep sleep
 /* ---------------------------------------------------------------------------------- */
